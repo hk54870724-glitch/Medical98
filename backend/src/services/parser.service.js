@@ -84,6 +84,46 @@ export function extractInvoiceFieldsFromUrl(url) {
   return null;
 }
 
+// 从票据平台查验页 HTML 中提取内部票据 idBase，用于下载原始票据文件
+export function extractIdBaseFromCheckPage(html) {
+  const h = String(html || '');
+  const m = h.match(/name=["']idBase["'][^>]*?value=["']([^"']+)["']/i)
+    || h.match(/value=["']([^"']+)["'][^>]*?name=["']idBase["']/i);
+  return m?.[1] || '';
+}
+
+// 由查验页 URL 与 idBase 构造同源下载接口 URL
+export function buildCheckPageDownloadUrl(pageUrl, idBase) {
+  const u = new URL(pageUrl);
+  u.pathname = '/download';
+  u.search = `idBase=${encodeURIComponent(idBase)}&idCard=`;
+  return u.href;
+}
+
+function extractDownloadFileName(contentDisposition) {
+  const m = String(contentDisposition || '').match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+  return m ? decodeURIComponent(m[1]).trim() : '';
+}
+
+// 查验页（HTML）场景：提取 idBase 后下载原始票据文件并解析，失败返回 null
+async function tryDownloadOriginalFromCheckPage(pageUrl, pageBuffer) {
+  try {
+    const idBase = extractIdBaseFromCheckPage(pageBuffer.toString('utf8'));
+    if (!idBase) return null;
+    const dl = await downloadRemote(buildCheckPageDownloadUrl(pageUrl, idBase));
+    if (/^text\/html/i.test(dl.contentType)) return null;
+    const originalName = extractDownloadFileName(dl.contentDisposition) || `${idBase}.pdf`;
+    const file = { buffer: dl.buffer, originalname: originalName, mimetype: dl.contentType, size: dl.buffer.length };
+    const saved = await saveUploadedFile(file);
+    let parsed = null;
+    try { parsed = await parseFile(file); } catch { parsed = null; }
+    if (!parsed || (!parsed.invoiceNo && !parsed.totalAmount && !parsed.payerName)) return null;
+    return { file: saved, parsed };
+  } catch {
+    return null;
+  }
+}
+
 export async function parseInvoice({text,originalName}){
   const trimmed = String(text || '').trim();
   const result=extract(trimmed);
@@ -110,14 +150,19 @@ export async function parseFile(file){
 }
 
 // 下载远程票据文件并解析，供扫描枪二维码（URL）场景使用。
-// 若 URL 是票据平台查验页（HTML 而非票据文件），则仅返回从 URL 提取的字段。
+// 若 URL 是票据平台查验页（HTML），提取 idBase 后下载原始票据文件解析；
+// 无法下载或解析失败时，仅返回从 URL 提取的字段。
 export async function resolveRemoteInvoice(url) {
   const urlFields = extractInvoiceFieldsFromUrl(url);
-  const { buffer, contentType } = await downloadRemote(url);
+  const { buffer, contentType, contentDisposition } = await downloadRemote(url);
   if (/^text\/html/i.test(contentType)) {
+    const original = await tryDownloadOriginalFromCheckPage(url, buffer);
+    if (original?.parsed?.invoiceNo) {
+      return { file: original.file, parsed: { ...(urlFields || {}), ...(original.parsed) } };
+    }
     return { file: null, parsed: urlFields };
   }
-  const originalName = url.split('/').pop() || 'remote.invoice';
+  const originalName = extractDownloadFileName(contentDisposition) || url.split('/').pop() || 'remote.invoice';
   const file = { buffer, originalname: originalName, mimetype: contentType, size: buffer.length };
   const saved = await saveUploadedFile(file);
   let parsed = null;
@@ -200,6 +245,7 @@ export async function downloadRemote(url) {
   } finally { clearTimeout(timer); }
   if (!res.ok) throw new AppError('REMOTE_DOWNLOAD_FAILED', `票据下载失败：HTTP ${res.status}`, 422);
   const contentType = res.headers.get('content-type') || 'application/octet-stream';
+  const contentDisposition = res.headers.get('content-disposition') || '';
   const contentLength = Number(res.headers.get('content-length') || 0);
   if (contentLength > maxBytes) throw new AppError('REMOTE_DOWNLOAD_TOO_LARGE', '远程文件超过大小限制', 422);
   const chunks = [];
@@ -211,5 +257,5 @@ export async function downloadRemote(url) {
       chunks.push(value);
     }
   }
-  return { buffer: Buffer.concat(chunks), contentType };
+  return { buffer: Buffer.concat(chunks), contentType, contentDisposition };
 }

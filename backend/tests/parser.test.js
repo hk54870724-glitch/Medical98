@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInvoice, extractInvoiceFieldsFromUrl } from '../src/services/parser.service.js';
+import { parseInvoice, extractInvoiceFieldsFromUrl, extractIdBaseFromCheckPage, buildCheckPageDownloadUrl } from '../src/services/parser.service.js';
 
 // 用户提供的江苏省医疗门诊收费票据（电子）样票文本
 const jiangsuSample = `其他信息
@@ -73,4 +73,16 @@ test('查验页 URL 文本解析不再报“无法识别”，返回发票号码
   const r = await parseInvoice({ text: 'http://einvoice.jsczt.cn/page/32060123/0022739009/138973' });
   assert.equal(r.invoiceNo, '0022739009');
   assert.equal(r.sourceType, 'URL');
+});
+
+test('查验页 HTML 提取 idBase 并构造同源下载 URL', () => {
+  const html = '<form id="downloadForm"><input type="hidden" value="473011ebe0f04410da7" name="idBase"/><input type="hidden" value="" name="idCard"/></form>';
+  assert.equal(extractIdBaseFromCheckPage(html), '473011ebe0f04410da7');
+  // 属性顺序反过来的写法也能提取
+  assert.equal(extractIdBaseFromCheckPage('<input name="idBase" value="abc123"/>'), 'abc123');
+  assert.equal(extractIdBaseFromCheckPage('<html>no idBase here</html>'), '');
+  assert.equal(
+    buildCheckPageDownloadUrl('http://einvoice.jsczt.cn/page/32060123/0022739009/138973', '473011ebe0f04410da7'),
+    'http://einvoice.jsczt.cn/download?idBase=473011ebe0f04410da7&idCard='
+  );
 });
