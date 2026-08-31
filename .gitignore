@@ -19,6 +19,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# Office lock/temp files
+~$*
+
 # IDE
 .idea/
 .vscode/

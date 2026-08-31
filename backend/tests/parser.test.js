@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInvoice } from '../src/services/parser.service.js';
+import { parseInvoice, extractInvoiceFieldsFromUrl } from '../src/services/parser.service.js';
 
 // 用户提供的江苏省医疗门诊收费票据（电子）样票文本
 const jiangsuSample = `其他信息
@@ -58,4 +58,19 @@ test('个人自费/个人现金支付也能识别为自付金额', async () => {
   assert.equal(r.selfPaid, 20.5);
   const r2 = await parseInvoice({ text: '发票号码：12345678\n开票日期：2024-05-01\n交款人：张三\n金额合计：￥100.00\n个人现金支付：30' });
   assert.equal(r2.selfPaid, 30);
+});
+
+test('票据查验页 URL 提取票据代码/号码/校验码', () => {
+  const f = extractInvoiceFieldsFromUrl('http://einvoice.jsczt.cn/page/32060123/0022739009/138973');
+  assert.equal(f.invoiceCode, '32060123');
+  assert.equal(f.invoiceNo, '0022739009');
+  assert.equal(f.checkCode, '138973');
+  assert.equal(extractInvoiceFieldsFromUrl('http://example.com/other'), null);
+  assert.equal(extractInvoiceFieldsFromUrl('not a url'), null);
+});
+
+test('查验页 URL 文本解析不再报“无法识别”，返回发票号码', async () => {
+  const r = await parseInvoice({ text: 'http://einvoice.jsczt.cn/page/32060123/0022739009/138973' });
+  assert.equal(r.invoiceNo, '0022739009');
+  assert.equal(r.sourceType, 'URL');
 });

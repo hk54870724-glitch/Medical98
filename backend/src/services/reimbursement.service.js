@@ -248,7 +248,9 @@ export async function getMyApplications(user, { yearId, status, page=1, pageSize
              ra.total_invoice_amount, ra.total_self_paid, ra.total_reimburse_amount,
              ry.year_no,
              (SELECT string_agg(rd.invoice_name, '、' ORDER BY rd.id)
-              FROM reimbursement_details rd WHERE rd.application_id = ra.id AND rd.status <> 2) AS invoice_names
+              FROM reimbursement_details rd WHERE rd.application_id = ra.id AND rd.status <> 2) AS invoice_names,
+             (SELECT string_agg(rd.invoice_no, '、' ORDER BY rd.id)
+              FROM reimbursement_details rd WHERE rd.application_id = ra.id AND rd.status <> 2) AS invoice_nos
       FROM reimbursement_applications ra JOIN reimbursement_years ry ON ry.id=ra.year_id
       WHERE ${where} ORDER BY ra.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
     // 按年度小计（全量，不受分页影响）
@@ -266,7 +268,8 @@ export async function getMyApplications(user, { yearId, status, page=1, pageSize
       totalInvoiceAmount: Number(r.total_invoice_amount),
       totalSelfPaid: Number(r.total_self_paid),
       totalReimburseAmount: Number(r.total_reimburse_amount),
-      invoiceNames: r.invoice_names ?? ''
+      invoiceNames: r.invoice_names ?? '',
+      invoiceNos: r.invoice_nos ?? ''
     }));
     return { items, page: Number(page), pageSize: Number(pageSize), total: count.rows[0].total, totalPages: Math.ceil(count.rows[0].total / Number(pageSize)), yearTotals: totals.rows.map(r => ({ yearNo: r.year_no, count: r.count, amount: Number(r.amount) })) };
   });

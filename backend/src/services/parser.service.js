@@ -73,9 +73,26 @@ async function parseConfiguredOcr(file){
   return data.text || data.rawText || '';
 }
 
+// 从票据平台查验 URL 提取票据字段，如 /page/{票据代码}/{票据号码}/{校验码}
+export function extractInvoiceFieldsFromUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const m = u.pathname.match(/^\/page\/(\d{6,12})\/([0-9A-Za-z-]{6,32})\/([0-9A-Za-z]+)\/?$/);
+  if (m) return { invoiceCode: m[1], invoiceNo: m[2], checkCode: m[3] };
+  const q = u.searchParams.get('invoiceNo') || u.searchParams.get('no');
+  if (q) return { invoiceNo: q };
+  return null;
+}
+
 export async function parseInvoice({text,originalName}){
-  const result=extract(text);
-  if(!result.invoiceNo&&!result.invoiceDate&&!result.payerName&&!result.totalAmount) throw new AppError('INVOICE_PARSE_FAILED','无法从输入中识别有效发票信息',422,{rawText:result.rawText});
+  const trimmed = String(text || '').trim();
+  const result=extract(trimmed);
+  if(!result.invoiceNo&&!result.invoiceDate&&!result.payerName&&!result.totalAmount){
+    // 输入是查验页 URL 时，从 URL 结构提取发票号码，避免“无法识别”误报
+    const urlFields = /^https?:\/\//i.test(trimmed) ? extractInvoiceFieldsFromUrl(trimmed) : null;
+    if (urlFields?.invoiceNo) return { ...result, ...urlFields, sourceType:'URL' };
+    throw new AppError('INVOICE_PARSE_FAILED','无法从输入中识别有效发票信息',422,{rawText:result.rawText});
+  }
   return {...result,sourceType:'TEXT_REGEX'};
 }
 
@@ -92,15 +109,20 @@ export async function parseFile(file){
   return {...data,sourceType,rawText:text};
 }
 
-// 下载远程票据文件并解析，供扫描枪二维码（URL）场景使用
+// 下载远程票据文件并解析，供扫描枪二维码（URL）场景使用。
+// 若 URL 是票据平台查验页（HTML 而非票据文件），则仅返回从 URL 提取的字段。
 export async function resolveRemoteInvoice(url) {
+  const urlFields = extractInvoiceFieldsFromUrl(url);
   const { buffer, contentType } = await downloadRemote(url);
+  if (/^text\/html/i.test(contentType)) {
+    return { file: null, parsed: urlFields };
+  }
   const originalName = url.split('/').pop() || 'remote.invoice';
   const file = { buffer, originalname: originalName, mimetype: contentType, size: buffer.length };
   const saved = await saveUploadedFile(file);
   let parsed = null;
   try { parsed = await parseFile(file); } catch { parsed = null; }
-  return { file: saved, parsed };
+  return { file: saved, parsed: { ...(urlFields || {}), ...(parsed || {}) } };
 }
 
 export async function saveUploadedFile(file){
