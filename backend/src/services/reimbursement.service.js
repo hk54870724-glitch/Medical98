@@ -1,6 +1,6 @@
 import { withTransaction } from '../db/pool.js';
 import { AppError } from '../utils/http.js';
-import { calcReimbursementAmount, childYearAllowed, isWithinDateRange } from '../utils/business.js';
+import { calcReimbursementAmount, childYearAllowed, isWithinDateRange, validateSelfPaidAgainstTotal } from '../utils/business.js';
 import {
   getDefaultYear, getYear, getEmployee, getEmployeeByNo, getChildren, getChildByName, getRateType,
   ensureQuotaRow, getQuotaUsed, insertApplication, insertDetail, registerInvoice, refreshApplicationTotals,
@@ -203,6 +203,7 @@ async function validateEditedDetail(client, detail, changes) {
   const invoiceName = changes.invoiceName ?? detail.invoice_name;
   const invoiceDate = changes.invoiceDate ?? detail.invoice_date;
   const selfPaid = changes.selfPaid ?? Number(detail.self_paid);
+  validateSelfPaidAgainstTotal(selfPaid, detail.total_amount);
   assertInvoiceDate({ invoiceDate, year, employee });
   const beneficiary = await classify(client, employee, invoiceName, year);
   const rt = await getRateType(client, detail.reimbursement_type_id);

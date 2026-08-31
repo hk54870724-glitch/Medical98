@@ -21,6 +21,12 @@ export function calcReimbursementAmount(selfPaid, rate) {
   return Math.round(Number(selfPaid) * Number(rate) * 100) / 100;
 }
 
+export function validateSelfPaidAgainstTotal(selfPaid, totalAmount, field = '个人自付') {
+  if (Number(selfPaid) > Number(totalAmount)) {
+    throw new AppError('SELF_PAID_EXCEEDS_TOTAL', `${field}不能大于发票总金额`, 422);
+  }
+}
+
 export function isWithinDateRange(date, start, end) {
   const d = new Date(date);
   const s = new Date(start);

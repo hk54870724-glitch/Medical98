@@ -5,6 +5,19 @@ import { hashPassword } from '../utils/password.js';
 import { AppError } from '../utils/http.js';
 import { parseCsv } from '../utils/csv.js';
 
+// 员工 CSV 可能来自 Windows 导出（GBK）或 UTF-8。UTF-8 严格解码失败时回退 GBK，
+// 避免中文乱码导致字段头（工号/姓名等）无法匹配。
+export function decodeCsvBuffer(buffer) {
+  if (buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+    return buffer.toString('utf8').replace(/^\uFEFF/, '');
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('gbk').decode(buffer);
+  }
+}
+
 export async function listYears() { return (await query(`SELECT * FROM reimbursement_years ORDER BY year_no DESC`)).rows; }
 export async function initializeYear(user, {sourceYearId,targetYear}) {
   return withTransaction(async client=>{
@@ -84,4 +97,4 @@ export async function setUserEnabled(user,id,enabled){const r=await query(`UPDAT
 export async function getParameters(){const r=await query(`SELECT param_key,param_value,param_type,description FROM system_parameters ORDER BY param_key`); return r.rows;}
 export async function updateParameters(user,p){return withTransaction(async c=>{for(const [key,value] of Object.entries(p)){await c.query(`INSERT INTO system_parameters(param_key,param_value,param_type,description) VALUES($1,$2,'STRING','') ON CONFLICT(param_key) DO UPDATE SET param_value=EXCLUDED.param_value,updated_at=NOW()`,[key,String(value)]);} return (await c.query(`SELECT param_key,param_value,param_type,description FROM system_parameters ORDER BY param_key`)).rows;});}
 
-export async function importEmployeesFromCsv(user,buffer){ const text=buffer.toString('utf8'); const rows=parseCsv(text); if(!rows.length) throw new AppError('CSV_EMPTY','CSV文件为空',422); return withTransaction(async c=>{let inserted=0,updated=0;for(const row of rows){const p={employeeNo:String(row.employeeNo||row['工号']||'').trim(),name:String(row.name||row['姓名']||'').trim(),gender:String(row.gender||row['性别']||'').trim().toUpperCase()==='男'?'M':String(row.gender||row['性别']||'').trim().toUpperCase()==='女'?'F':String(row.gender||'').trim().toUpperCase(),department:String(row.department||row['部门']||'').trim()||null,hireDate:row.hireDate||row['入职日期'],leaveDate:row.leaveDate||row['离职日期']||null,employmentStatus:row.employmentStatus||row['状态']||'ACTIVE'};if(!p.employeeNo||!p.name||!['M','F'].includes(p.gender)||!p.hireDate) throw new AppError('CSV_INVALID_ROW','存在缺失工号、姓名、性别或入职日期的记录',422);const ex=await c.query(`SELECT id FROM employees WHERE employee_no=$1`,[p.employeeNo]);if(ex.rowCount){await c.query(`UPDATE employees SET name=$1,gender=$2,department=$3,hire_date=$4,leave_date=$5,employment_status=$6,enabled=true,updated_at=NOW() WHERE id=$7`,[p.name,p.gender,p.department,p.hireDate,p.leaveDate,p.employmentStatus,ex.rows[0].id]);updated++;}else{await c.query(`INSERT INTO employees(employee_no,name,gender,department,hire_date,leave_date,employment_status,enabled) VALUES($1,$2,$3,$4,$5,$6,$7,true)`,[p.employeeNo,p.name,p.gender,p.department,p.hireDate,p.leaveDate,p.employmentStatus]);inserted++;}} return {total:rows.length,inserted,updated,failed:0}; }); }
+export async function importEmployeesFromCsv(user,buffer){ const text=decodeCsvBuffer(buffer); const rows=parseCsv(text); if(!rows.length) throw new AppError('CSV_EMPTY','CSV文件为空',422); return withTransaction(async c=>{let inserted=0,updated=0;for(const row of rows){const p={employeeNo:String(row.employeeNo||row['工号']||'').trim(),name:String(row.name||row['姓名']||'').trim(),gender:String(row.gender||row['性别']||'').trim().toUpperCase()==='男'?'M':String(row.gender||row['性别']||'').trim().toUpperCase()==='女'?'F':String(row.gender||'').trim().toUpperCase(),department:String(row.department||row['部门']||'').trim()||null,hireDate:row.hireDate||row['入职日期'],leaveDate:row.leaveDate||row['离职日期']||null,employmentStatus:row.employmentStatus||row['状态']||'ACTIVE'};if(!p.employeeNo||!p.name||!['M','F'].includes(p.gender)||!p.hireDate) throw new AppError('CSV_INVALID_ROW','存在缺失工号、姓名、性别或入职日期的记录',422);const ex=await c.query(`SELECT id FROM employees WHERE employee_no=$1`,[p.employeeNo]);if(ex.rowCount){await c.query(`UPDATE employees SET name=$1,gender=$2,department=$3,hire_date=$4,leave_date=$5,employment_status=$6,enabled=true,updated_at=NOW() WHERE id=$7`,[p.name,p.gender,p.department,p.hireDate,p.leaveDate,p.employmentStatus,ex.rows[0].id]);updated++;}else{await c.query(`INSERT INTO employees(employee_no,name,gender,department,hire_date,leave_date,employment_status,enabled) VALUES($1,$2,$3,$4,$5,$6,$7,true)`,[p.employeeNo,p.name,p.gender,p.department,p.hireDate,p.leaveDate,p.employmentStatus]);inserted++;}} return {total:rows.length,inserted,updated,failed:0}; }); }

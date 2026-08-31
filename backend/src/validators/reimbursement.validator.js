@@ -1,5 +1,5 @@
 import { AppError } from '../utils/http.js';
-import { money, parseYmd } from '../utils/business.js';
+import { money, parseYmd, validateSelfPaidAgainstTotal } from '../utils/business.js';
 
 export function validateCreatePayload(body) {
   if (!body || typeof body !== 'object') throw new AppError('INVALID_REQUEST', '请求数据无效', 422);
@@ -14,7 +14,7 @@ export function validateCreatePayload(body) {
     const totalAmount = money(row.totalAmount, `第${index + 1}行总金额`);
     const selfPaid = money(row.selfPaid, `第${index + 1}行个人自付`);
     if (totalAmount <= 0) throw new AppError('INVOICE_DATA_INVALID', `第${index + 1}行总金额必须大于0`, 422);
-    if (selfPaid > totalAmount) throw new AppError('INVOICE_DATA_INVALID', `第${index + 1}行个人自付金额不能大于总金额`, 422);
+    validateSelfPaidAgainstTotal(selfPaid, totalAmount, `第${index + 1}行个人自付`);
     return {
       invoiceName: String(row.invoiceName).trim(),
       invoiceNo: String(row.invoiceNo).trim(),

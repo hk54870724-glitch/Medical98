@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
 import { AppError } from '../utils/http.js';
 import { env } from '../config/env.js';
 
@@ -99,8 +100,80 @@ export async function saveUploadedFile(file){
   return {relativePath:relative,storageName:`${hash}.${ext}`,sha256:hash,size:file.size,type:ext.toUpperCase(),originalName:file.originalname};
 }
 
-export async function downloadRemote(url){
-  let u;try{u=new URL(url);}catch{throw new AppError('INVALID_URL','票据URL无效',422);} if(!['http:','https:'].includes(u.protocol))throw new AppError('URL_SCHEME_NOT_ALLOWED','只允许HTTP/HTTPS',422);
-  if(/^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(u.hostname)||/^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[0-1])\./.test(u.hostname))throw new AppError('SSRF_BLOCKED','禁止访问内网或本机地址',403);
-  const res=await fetch(u,{redirect:'manual'}); if(!res.ok)throw new AppError('REMOTE_DOWNLOAD_FAILED',`票据下载失败：HTTP ${res.status}`,422); const arr=Buffer.from(await res.arrayBuffer()); return {buffer:arr,contentType:res.headers.get('content-type')||'application/octet-stream'};
+function ipv4ToInt(ip) {
+  const parts = String(ip).split('.').map(Number);
+  if (parts.length !== 4 || parts.some(p => !Number.isInteger(p) || p < 0 || p > 255)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+// 判定是否为回环/私网/保留地址（IPv4 含 CIDR 覆盖，IPv6 含映射与链路本地/ULA）
+export function isPrivateHost(host) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost') return true;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return isPrivateIpv4(h);
+  if (h.includes(':')) {
+    // IPv4-mapped IPv6：::ffff:x.x.x.x 仍按 IPv4 判定
+    if (h.startsWith('::ffff:')) return isPrivateIpv4(h.slice(7));
+    const lower = h.toLowerCase();
+    if (lower === '::' || lower === '::1') return true;
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // link-local fe80::/10
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA fc00::/7
+    return false;
+  }
+  return false;
+}
+
+function isPrivateIpv4(ip) {
+  const n = ipv4ToInt(ip);
+  if (n === null) return false;
+  // 覆盖：0.0.0.0/8、10/8、100.64/10、127/8、169.254/16、172.16/12、
+  // 192.0.0.0/24、192.0.2/24、192.168/16、198.18/15、198.51.100/24、
+  // 203.0.113/24、224/4 组播、240/4 保留
+  const blocks = [
+    [0x00000000, 8], [0x0a000000, 8], [0x64400000, 10], [0x7f000000, 8],
+    [0xa9fe0000, 16], [0xac100000, 12], [0xc0000000, 24], [0xc0000200, 24],
+    [0xc0a80000, 16], [0xc6120000, 15], [0xc6336400, 24], [0xcb007100, 24],
+    [0xe0000000, 4], [0xf0000000, 4]
+  ];
+  return blocks.some(([base, bits]) => (n >>> (32 - bits)) === (base >>> (32 - bits)));
+}
+
+export async function downloadRemote(url) {
+  let u;
+  try { u = new URL(url); } catch { throw new AppError('INVALID_URL', '票据URL无效', 422); }
+  if (!['http:', 'https:'].includes(u.protocol)) throw new AppError('URL_SCHEME_NOT_ALLOWED', '只允许HTTP/HTTPS', 422);
+  const hostname = u.hostname.replace(/^\[|\]$/g, '');
+  if (isPrivateHost(hostname)) throw new AppError('SSRF_BLOCKED', '禁止访问内网或本机地址', 403);
+  // 域名必须解析后再次校验，防止 DNS 解析到内网地址（DNS rebinding）
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+    let records;
+    try { records = await dns.lookup(hostname, { all: true }); }
+    catch { throw new AppError('REMOTE_DOWNLOAD_FAILED', '无法解析票据域名', 422); }
+    if (!records.length || records.some(r => isPrivateHost(r.address))) {
+      throw new AppError('SSRF_BLOCKED', '目标域名解析到内网或本机地址，已拦截', 403);
+    }
+  }
+  const maxBytes = env.MAX_UPLOAD_MB * 1024 * 1024;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  let res;
+  try { res = await fetch(u, { redirect: 'manual', signal: controller.signal }); }
+  catch (e) {
+    if (e?.name === 'AbortError') throw new AppError('REMOTE_DOWNLOAD_TIMEOUT', '票据下载超时', 408);
+    throw new AppError('REMOTE_DOWNLOAD_FAILED', '票据下载失败', 422);
+  } finally { clearTimeout(timer); }
+  if (!res.ok) throw new AppError('REMOTE_DOWNLOAD_FAILED', `票据下载失败：HTTP ${res.status}`, 422);
+  const contentType = res.headers.get('content-type') || 'application/octet-stream';
+  const contentLength = Number(res.headers.get('content-length') || 0);
+  if (contentLength > maxBytes) throw new AppError('REMOTE_DOWNLOAD_TOO_LARGE', '远程文件超过大小限制', 422);
+  const chunks = [];
+  let received = 0;
+  if (res.body) {
+    for await (const value of res.body) {
+      received += value.length;
+      if (received > maxBytes) throw new AppError('REMOTE_DOWNLOAD_TOO_LARGE', '远程文件超过大小限制', 422);
+      chunks.push(value);
+    }
+  }
+  return { buffer: Buffer.concat(chunks), contentType };
 }

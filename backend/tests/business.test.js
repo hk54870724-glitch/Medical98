@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calcReimbursementAmount, childYearAllowed, applicationStatus } from '../src/utils/business.js';
+import { calcReimbursementAmount, childYearAllowed, applicationStatus, validateSelfPaidAgainstTotal } from '../src/utils/business.js';
 
 test('报销金额 = 个人自付 × 报销比例', () => {
   assert.equal(calcReimbursementAmount(1000, 0.8), 800);
@@ -29,4 +29,11 @@ test('年度可用额度 = 年度额度 - 已通过 - 待审批', () => {
   assert.equal(request <= annualLimit - approved - pending, true);
   assert.equal(5000 <= annualLimit - 3000 - 2000, true);
   assert.equal(5001 <= annualLimit - 3000 - 2000, false);
+});
+
+test('个人自付金额不能大于发票总金额（创建与审批共用）', () => {
+  validateSelfPaidAgainstTotal(500, 500);
+  validateSelfPaidAgainstTotal('100.5', '200');
+  assert.throws(() => validateSelfPaidAgainstTotal(501, 500), (e) => e.code === 'SELF_PAID_EXCEEDS_TOTAL' && e.status === 422);
+  assert.throws(() => validateSelfPaidAgainstTotal('200.01', '200'), (e) => e.code === 'SELF_PAID_EXCEEDS_TOTAL');
 });
