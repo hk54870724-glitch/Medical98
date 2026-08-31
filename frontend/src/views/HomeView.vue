@@ -1,0 +1,2 @@
+<template><MainLayout><a-card><a-result status="success" title="欢迎使用企业医药费报销系统"><template #subtitle>系统已根据您的角色进入相应业务模块。</template><template #extra><a-button type="primary" @click="go">进入业务</a-button></template></a-result></a-card></MainLayout></template>
+<script setup>import MainLayout from '../layouts/MainLayout.vue';import {useRouter} from 'vue-router';const router=useRouter();const go=()=>router.push(window.__user?.role==='EMPLOYEE'?'/apply':window.__user?.role==='ADMIN'?'/admin/years':'/approvals');</script>
