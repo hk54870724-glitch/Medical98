@@ -12,6 +12,7 @@
         <a-menu-item v-if="isAdmin" key="/admin/users">账号</a-menu-item>
       </a-menu>
       <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;color:#4e5969">{{ user?.employeeName || user?.username }}</span>
         <a-tag>{{ user?.role }}</a-tag>
         <a-button type="text" @click="doLogout">退出</a-button>
       </div>

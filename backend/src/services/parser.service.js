@@ -89,6 +89,17 @@ export async function parseFile(file){
   return {...data,sourceType,rawText:text};
 }
 
+// 下载远程票据文件并解析，供扫描枪二维码（URL）场景使用
+export async function resolveRemoteInvoice(url) {
+  const { buffer, contentType } = await downloadRemote(url);
+  const originalName = url.split('/').pop() || 'remote.invoice';
+  const file = { buffer, originalname: originalName, mimetype: contentType, size: buffer.length };
+  const saved = await saveUploadedFile(file);
+  let parsed = null;
+  try { parsed = await parseFile(file); } catch { parsed = null; }
+  return { file: saved, parsed };
+}
+
 export async function saveUploadedFile(file){
   if(!file)throw new AppError('FILE_REQUIRED','必须上传文件',422);
   const allowed=['application/pdf','image/jpeg','image/png','image/webp','application/octet-stream'];

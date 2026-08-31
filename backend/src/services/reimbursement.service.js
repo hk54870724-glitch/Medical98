@@ -12,6 +12,66 @@ function assertYearApplicationAllowed(year, nowYear) {
   if (year.year_no !== nowYear && !year.allow_backfill) throw new AppError('YEAR_BACKFILL_DISABLED', '该报销年度当前不允许补登', 422);
 }
 
+// 数据库返回 snake_case，前端统一消费 camelCase
+function mapYear(row) {
+  return {
+    id: row.id,
+    yearNo: row.year_no,
+    annualLimit: row.annual_limit === undefined ? undefined : Number(row.annual_limit),
+    invoiceStartDate: row.invoice_start_date,
+    invoiceEndDate: row.invoice_end_date,
+    allowBackfill: row.allow_backfill,
+    maleChildYearRule: row.male_child_year_rule,
+    femaleChildYearRule: row.female_child_year_rule,
+    status: row.status,
+    isDefault: row.is_default,
+    initializedFromYearId: row.initialized_from_year_id,
+    remark: row.remark,
+    updatedBy: row.updated_by
+  };
+}
+
+function mapEmployee(row) {
+  return {
+    id: row.id,
+    employeeNo: row.employee_no,
+    name: row.name,
+    gender: row.gender,
+    department: row.department,
+    hireDate: row.hire_date,
+    leaveDate: row.leave_date,
+    employmentStatus: row.employment_status,
+    enabled: row.enabled
+  };
+}
+
+function mapChild(row) {
+  return { id: row.id, childName: row.child_name, gender: row.gender, birthDate: row.birth_date, enabled: row.enabled };
+}
+
+function mapPendingDetail(row) {
+  return {
+    detailId: row.detail_id,
+    applicationId: row.application_id,
+    applicationNo: row.application_no,
+    yearNo: row.year_no,
+    employeeNo: row.employee_no,
+    employeeName: row.employee_name,
+    department: row.department,
+    beneficiaryType: row.beneficiary_type,
+    categoryName: row.category_name,
+    typeName: row.type_name,
+    invoiceName: row.invoice_name,
+    invoiceNo: row.invoice_no,
+    invoiceDate: row.invoice_date,
+    totalAmount: Number(row.total_amount),
+    selfPaid: Number(row.self_paid),
+    reimbursementRate: Number(row.reimbursement_rate),
+    reimbursementAmount: Number(row.reimbursement_amount),
+    status: row.status
+  };
+}
+
 function assertInvoiceDate({ invoiceDate, year, employee }) {
   if (!isWithinDateRange(invoiceDate, year.invoice_start_date, year.invoice_end_date)) {
     throw new AppError('INVOICE_DATE_OUT_OF_RANGE', `发票日期必须在${year.invoice_start_date}至${year.invoice_end_date}范围内`, 422);
@@ -38,7 +98,10 @@ export async function getContext(user) {
     if (!defaultYear) throw new AppError('DEFAULT_YEAR_NOT_FOUND', '当前没有可用的默认报销年度账套', 500);
     const years = await client.query(`SELECT id, year_no, status, allow_backfill, is_default FROM reimbursement_years WHERE status='ACTIVE' ORDER BY year_no DESC`);
     const employee = user.employee_id ? await getEmployee(client, user.employee_id) : null;
-    return { currentDate: new Date().toISOString().slice(0,10), defaultYear, availableYears: years.rows, employee };
+    const setting = await client.query(`SELECT param_value FROM system_parameters WHERE param_key='children_visible' LIMIT 1`);
+    const childrenVisible = String(setting.rows[0]?.param_value ?? 'true').toLowerCase() === 'true';
+    const children = employee && childrenVisible ? (await getChildren(client, employee.id)).map(mapChild) : [];
+    return { currentDate: new Date().toISOString().slice(0, 10), defaultYear: mapYear(defaultYear), availableYears: years.rows.map(mapYear), employee: employee ? mapEmployee(employee) : null, children };
   });
 }
 
@@ -170,7 +233,7 @@ export async function createApplication(user, payload) {
 }
 
 export async function getMyApplications(user, { yearId, status, page=1, pageSize=20 }) {
-  if (!user.employee_id) return { items: [], page, pageSize, total: 0, totalPages: 0 };
+  if (!user.employee_id) return { items: [], page, pageSize, total: 0, totalPages: 0, yearTotals: [] };
   return withTransaction(async client => {
     const conditions = ['ra.employee_id = $1'];
     const params = [user.employee_id];
@@ -180,8 +243,32 @@ export async function getMyApplications(user, { yearId, status, page=1, pageSize
     const count = await client.query(`SELECT COUNT(*)::int AS total FROM reimbursement_applications ra WHERE ${where}`, params);
     const offset = (Number(page)-1)*Number(pageSize);
     params.push(Number(pageSize), offset);
-    const rows = await client.query(`SELECT ra.*, ry.year_no FROM reimbursement_applications ra JOIN reimbursement_years ry ON ry.id=ra.year_id WHERE ${where} ORDER BY ra.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
-    return { items: rows.rows, page: Number(page), pageSize: Number(pageSize), total: count.rows[0].total, totalPages: Math.ceil(count.rows[0].total / Number(pageSize)) };
+    const rows = await client.query(`
+      SELECT ra.id, ra.application_no, ra.year_id, ra.apply_date, ra.status,
+             ra.total_invoice_amount, ra.total_self_paid, ra.total_reimburse_amount,
+             ry.year_no,
+             (SELECT string_agg(rd.invoice_name, '、' ORDER BY rd.id)
+              FROM reimbursement_details rd WHERE rd.application_id = ra.id AND rd.status <> 2) AS invoice_names
+      FROM reimbursement_applications ra JOIN reimbursement_years ry ON ry.id=ra.year_id
+      WHERE ${where} ORDER BY ra.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
+    // 按年度小计（全量，不受分页影响）
+    const totals = await client.query(`
+      SELECT ry.year_no, COUNT(*)::int AS count, COALESCE(SUM(ra.total_reimburse_amount),0)::numeric(14,2) AS amount
+      FROM reimbursement_applications ra JOIN reimbursement_years ry ON ry.id=ra.year_id
+      WHERE ra.employee_id = $1 GROUP BY ry.year_no ORDER BY ry.year_no`, [user.employee_id]);
+    const items = rows.rows.map(r => ({
+      id: r.id,
+      applicationNo: r.application_no,
+      yearId: r.year_id,
+      yearNo: r.year_no,
+      applyDate: r.apply_date,
+      status: r.status,
+      totalInvoiceAmount: Number(r.total_invoice_amount),
+      totalSelfPaid: Number(r.total_self_paid),
+      totalReimburseAmount: Number(r.total_reimburse_amount),
+      invoiceNames: r.invoice_names ?? ''
+    }));
+    return { items, page: Number(page), pageSize: Number(pageSize), total: count.rows[0].total, totalPages: Math.ceil(count.rows[0].total / Number(pageSize)), yearTotals: totals.rows.map(r => ({ yearNo: r.year_no, count: r.count, amount: Number(r.amount) })) };
   });
 }
 
@@ -282,8 +369,8 @@ export async function pendingApprovals({ yearId, employeeNo, department, applica
     const where = conditions.join(' AND ');
     const count = await client.query(`SELECT COUNT(*)::int AS total FROM reimbursement_details rd JOIN reimbursement_applications ra ON ra.id=rd.application_id JOIN employees e ON e.id=ra.employee_id WHERE ${where}`, params);
     const offset=(Number(page)-1)*Number(pageSize); params.push(Number(pageSize),offset);
-    const rows=await client.query(`SELECT rd.id AS detail_id, ra.id AS application_id, ra.application_no, ry.year_no, e.employee_no, e.name AS employee_name, e.department, rd.beneficiary_type, rc.name AS category_name, rt.name AS type_name, rd.invoice_name, rd.invoice_no, rd.invoice_date, rd.total_amount, rd.self_paid, rd.reimbursement_rate, rd.reimbursement_amount, rd.status FROM reimbursement_details rd JOIN reimbursement_applications ra ON ra.id=rd.application_id JOIN reimbursement_years ry ON ry.id=ra.year_id JOIN employees e ON e.id=ra.employee_id JOIN reimbursement_types rt ON rt.id=rd.reimbursement_type_id JOIN reimbursement_categories rc ON rc.id=rt.category_id WHERE ${where} ORDER BY rd.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
-    return { items: rows.rows, page:Number(page), pageSize:Number(pageSize), total:count.rows[0].total, totalPages:Math.ceil(count.rows[0].total/Number(pageSize)) };
+    const rows=await client.query(`SELECT rd.id AS detail_id, ra.id AS application_id, ra.application_no AS application_no, ry.year_no AS year_no, e.employee_no AS employee_no, e.name AS employee_name, e.department AS department, rd.beneficiary_type AS beneficiary_type, rc.name AS category_name, rt.name AS type_name, rd.invoice_name AS invoice_name, rd.invoice_no AS invoice_no, rd.invoice_date AS invoice_date, rd.total_amount AS total_amount, rd.self_paid AS self_paid, rd.reimbursement_rate AS reimbursement_rate, rd.reimbursement_amount AS reimbursement_amount, rd.status AS status FROM reimbursement_details rd JOIN reimbursement_applications ra ON ra.id=rd.application_id JOIN reimbursement_years ry ON ry.id=ra.year_id JOIN employees e ON e.id=ra.employee_id JOIN reimbursement_types rt ON rt.id=rd.reimbursement_type_id JOIN reimbursement_categories rc ON rc.id=rt.category_id WHERE ${where} ORDER BY rd.id DESC LIMIT $${params.length-1} OFFSET $${params.length}`, params);
+    return { items: rows.rows.map(mapPendingDetail), page:Number(page), pageSize:Number(pageSize), total:count.rows[0].total, totalPages:Math.ceil(count.rows[0].total/Number(pageSize)) };
   });
 }
 

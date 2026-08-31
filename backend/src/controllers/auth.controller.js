@@ -20,7 +20,16 @@ export async function login(req, res) {
 }
 
 export async function logout(req, res) { await new Promise((resolve,reject)=>{ if(!req.session)return resolve(); req.session.destroy(err=>err?reject(err):resolve()); }); res.clearCookie(env.SESSION_NAME); return ok(res,null,'已退出登录'); }
-export async function me(req,res){ return ok(res, req.currentUser ? {id:req.currentUser.id,username:req.currentUser.username,role:req.currentUser.role_code,employeeId:req.currentUser.employee_id,enabled:req.currentUser.enabled,mustChangePassword:req.currentUser.must_change_password} : null); }
+export async function me(req,res){
+  const u = req.currentUser;
+  if (!u) return ok(res, null);
+  let employeeName = null;
+  if (u.employee_id) {
+    const r = await query(`SELECT name FROM employees WHERE id=$1 AND enabled=true`, [u.employee_id]);
+    employeeName = r.rows[0]?.name ?? null;
+  }
+  return ok(res, { id:u.id, username:u.username, role:u.role_code, employeeId:u.employee_id, enabled:u.enabled, mustChangePassword:u.must_change_password, employeeName });
+}
 export async function changePassword(req,res){
   const { currentPassword, newPassword }=req.body??{};
   if(!currentPassword||!newPassword) throw new AppError('PASSWORD_REQUIRED','请输入原密码和新密码',422);
