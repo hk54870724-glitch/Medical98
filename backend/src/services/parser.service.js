@@ -19,7 +19,9 @@ function extract(text){
   const invoiceNo=(t.match(/(?:发票号码|票据号码)\s*[:：]?\s*([0-9A-Za-z-]{6,32})/i)||[])[1]||'';
   const invoiceDate=normalizeDate((t.match(/(?:开票日期)\s*[:：]?\s*(\d{4}[-年/.]\d{1,2}[-月/.]\d{1,2})/)||[])[1]||'');
   let payerName='';
-  const payerPatterns=[/(?:购买方|购方)[^\n]{0,80}?(?:名称)\s*[:：]\s*([^\n]{1,100})/i,/(?:购买方名称|购方名称)\s*[:：]?\s*([^\n]{1,100})/i,/(?:交款人|付款方)\s*[:：]\s*([^\n]{1,80})/i];
+  // 交款人/付款方：姓名取非空字符，遇到“开票日期/票据号码/校验码”等后续字段或换行即停，
+  // 避免电子票据文本提取把同行后续字段（如“开票日期：2023-04-30”）一并解析进姓名
+  const payerPatterns=[/(?:购买方|购方)[^\n]{0,80}?(?:名称)\s*[:：]\s*([^\n]{1,100})/i,/(?:购买方名称|购方名称)\s*[:：]?\s*([^\n]{1,100})/i,/(?:交款人|付款方)\s*[:：]\s*([^\s:：]{1,40}?)(?=\s*(?:开票日期|票据号码|发票号码|校验码|金额合计|收款单位|[\r\n]|$))/i];
   for(const re of payerPatterns){ const m=t.match(re); const v=normalizeName(m?.[1]); if(v){payerName=v;break;} }
   if(!payerName){
     const lines=t.split('\n').map(cleanValue).filter(Boolean);
@@ -31,10 +33,11 @@ function extract(text){
       }
     }
   }
-  const totalPatterns=[/(?:价税合计|合计金额|总金额)\s*[（(]?\s*(?:小写)?\s*[)）]?\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i,/(?:价税合计|合计)\s*[（(]?小写[)）]?\s*[^\d￥¥]{0,10}[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i];
+  // 金额：兼容“价税合计/合计金额/总金额/实收金额/金额合计”，以及电子票据常见的“(小写)￥X”独立行
+  const totalPatterns=[/(?:价税合计|合计金额|总金额|实收金额|金额合计)\s*[（(]?\s*(?:小写)?\s*[)）]?\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i,/(?:价税合计|合计)\s*[（(]?小写[)）]?\s*[^\d￥¥]{0,10}[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i,/[（(]\s*小写\s*[)）]\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i];
   let totalAmount=0; for(const re of totalPatterns){const m=t.match(re); if(m){totalAmount=parseMoney(m[1]);if(totalAmount)break;}}
   let selfPaid=0;
-  const selfPatterns=[/(?:个人自付|个人支付|自付金额|自付)\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i,/(?:个人负担|个人承担)\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i];
+  const selfPatterns=[/(?:个人自付|个人现金支付|个人自费|自负金额|自费金额|自付金额|自付)\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i,/(?:个人负担|个人承担)\s*[:：]?\s*[￥¥]?\s*([0-9,]+(?:\.\d{1,2})?)/i];
   for(const re of selfPatterns){const m=t.match(re);if(m){selfPaid=parseMoney(m[1]);if(selfPaid)break;}}
   return {invoiceNo,invoiceDate,payerName,totalAmount,selfPaid,rawText:t};
 }
