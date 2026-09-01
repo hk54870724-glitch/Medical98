@@ -4,18 +4,18 @@
       <h3>我的报销申请</h3>
       <a-table :data="rows" :span-method="spanMethod">
         <template #columns>
-          <a-table-column title="申请单号">
-            <template #cell="{ record }">{{ record.isSummary ? '合计' : record.applicationNo }}</template>
-          </a-table-column>
+          <a-table-column title="申请单号" data-index="applicationNo"/>
           <a-table-column title="年度" data-index="yearNo"/>
-          <a-table-column title="报销日期" data-index="applyDate"/>
+          <a-table-column title="报销日期">
+            <template #cell="{ record }">{{ formatDate(record.applyDate) }}</template>
+          </a-table-column>
           <a-table-column title="发票姓名" data-index="invoiceName"/>
           <a-table-column title="发票号码" data-index="invoiceNo"/>
           <a-table-column title="发票金额" data-index="totalAmount"/>
           <a-table-column title="个人自付" data-index="selfPaid"/>
           <a-table-column title="报销金额" data-index="reimbursementAmount"/>
           <a-table-column title="状态">
-            <template #cell="{ record }">{{ record.isSummary ? '' : statusText(record.status) }}</template>
+            <template #cell="{ record }">{{ statusText(record.status) }}</template>
           </a-table-column>
         </template>
       </a-table>
@@ -36,14 +36,18 @@ const yearTotals = ref([]);
 
 const statusText = (s) => ['待审批', '已通过', '已驳回'][s] ?? '-';
 
-// 申请单号、年度、报销日期三列按明细行数合并；合计行在申请单号列跨三列
+// 后端返回 date 类型为 UTC ISO 字符串（如 2026-09-19T16:00:00.000Z），按本地时区格式化为 yyyy-mm-dd
+const formatDate = (iso) => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// 申请单号、年度、报销日期三列按明细行数合并
 const spanMethod = ({ rowIndex, columnIndex }) => {
   const row = rows.value[rowIndex];
   if (!row) return { rowspan: 1, colspan: 1 };
-  if (row.isSummary) {
-    if (columnIndex === 0) return { rowspan: 1, colspan: 3 };
-    return { rowspan: 1, colspan: 1 };
-  }
   if (columnIndex <= 2) {
     if (row.isFirst) return { rowspan: row.groupRowSpan, colspan: 1 };
     return { rowspan: 0, colspan: 0 };
@@ -60,7 +64,6 @@ onMounted(async () => {
     const details = it.details && it.details.length ? it.details : [{}];
     details.forEach((d, i) => {
       arr.push({
-        isSummary: false,
         applicationNo: it.applicationNo,
         yearNo: it.yearNo,
         applyDate: it.applyDate,
@@ -73,12 +76,6 @@ onMounted(async () => {
         reimbursementAmount: d.reimbursementAmount ?? '-',
         status: d.status ?? ''
       });
-    });
-    arr.push({
-      isSummary: true,
-      totalAmount: it.totalInvoiceAmount,
-      selfPaid: it.totalSelfPaid,
-      reimbursementAmount: it.totalReimburseAmount
     });
   }
   rows.value = arr;
