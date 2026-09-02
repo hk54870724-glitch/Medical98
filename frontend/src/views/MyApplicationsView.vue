@@ -11,7 +11,8 @@
           </a-table-column>
           <a-table-column title="发票姓名" data-index="invoiceName"/>
           <a-table-column title="发票号码" data-index="invoiceNo"/>
-          <a-table-column title="个人现金支付" data-index="amount"/>
+          <a-table-column title="个人现金支付" data-index="totalAmount"/>
+          <a-table-column title="个人自付" data-index="selfPaid"/>
           <a-table-column title="报销金额" data-index="reimbursementAmount"/>
           <a-table-column title="状态">
             <template #cell="{ record }">{{ statusText(record.status) }}</template>
@@ -70,7 +71,8 @@ onMounted(async () => {
         isFirst: i === 0,
         invoiceName: d.invoiceName ?? '-',
         invoiceNo: d.invoiceNo ?? '-',
-        amount: d.selfPaid ?? '-',
+        totalAmount: d.totalAmount ?? '-',
+        selfPaid: d.selfPaid ?? '-',
         reimbursementAmount: d.reimbursementAmount ?? '-',
         status: d.status ?? ''
       });
