@@ -16,5 +16,5 @@ import { Message } from '@arco-design/web-vue';
 import { useRouter } from 'vue-router';
 import { login } from '../api/auth';
 const router = useRouter(); const loading = ref(false); const form = reactive({username:'',password:''});
-const submit = async () => { loading.value=true; try { const r=await login(form); window.__user=r.data.user; router.push('/'); } catch(e) { Message.error(e.message); } finally { loading.value=false; } };
+const submit = async () => { loading.value=true; try { const r=await login(form); window.__user=r.data.user; router.push('/'); } catch(e) { Message.error(e.message,5000); } finally { loading.value=false; } };
 </script>

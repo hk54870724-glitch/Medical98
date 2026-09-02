@@ -16,11 +16,13 @@ export const employees=async(req,res)=>ok(res,await svc.listEmployees({keyword:r
 export const createEmployee=async(req,res)=>ok(res,await svc.createEmployee(req.currentUser,req.body),'创建成功',201);
 export const updateEmployee=async(req,res)=>ok(res,await svc.updateEmployee(req.currentUser,Number(req.params.id),req.body));
 export const deleteEmployee=async(req,res)=>ok(res,await svc.deleteEmployee(req.currentUser,Number(req.params.id)));
+export const enableEmployee=async(req,res)=>ok(res,await svc.enableEmployee(req.currentUser,Number(req.params.id)));
 export const importEmployees=async(req,res)=>ok(res,await svc.importEmployeesFromCsv(req.currentUser,req.file.buffer),'导入成功');
 export const children=async(req,res)=>ok(res,await svc.listChildren(Number(req.params.employeeId)));
 export const createChild=async(req,res)=>ok(res,await svc.createChild(Number(req.params.employeeId),req.body),'创建成功',201);
 export const updateChild=async(req,res)=>ok(res,await svc.updateChild(Number(req.params.id),req.body));
-export const deleteChild=async(req,res)=>ok(res,await svc.deleteChild(Number(req.params.id)));
+export const deleteChild=async(req,res)=>ok(res,await svc.deleteChild(Number(req.params.id),req.body));
+export const enableChild=async(req,res)=>ok(res,await svc.enableChild(Number(req.params.id)));
 export const users=async(req,res)=>ok(res,await svc.listUsers());
 export const createUser=async(req,res)=>ok(res,await svc.createUser(req.currentUser,req.body),'创建成功',201);
 export const updateUser=async(req,res)=>ok(res,await svc.updateUser(req.currentUser,Number(req.params.id),req.body));
