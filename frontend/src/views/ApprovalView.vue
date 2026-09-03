@@ -5,7 +5,7 @@ const items=ref([]),selectedKeys=ref([]);
 const allSelected=computed(()=>items.value.length>0&&selectedKeys.value.length===items.value.length);
 const load=async()=>{const r=await getPendingApprovals({page:1,pageSize:100});items.value=r.data.items;selectedKeys.value=[]};
 const toggleAll=()=>{if(allSelected.value){selectedKeys.value=[];}else{selectedKeys.value=items.value.map(i=>i.detailId);}};
-const error=e=>Message.error(e.message||'操作失败',5000);
+const error=e=>Message.error({content:e.message||'操作失败',duration:5000});
 const pass=async(r)=>{try{await approveDetail({detailId:r.detailId});Message.success('已通过');load()}catch(e){error(e)}};
 const reject=async(r)=>{try{await rejectDetail({detailId:r.detailId});Message.success('已驳回');load()}catch(e){error(e)}};
 const batchPass=async()=>{try{await batchApprove({items:selectedKeys.value.map(k=>({detailId:k}))});load()}catch(e){error(e)}};
